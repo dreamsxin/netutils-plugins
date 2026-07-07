@@ -106,6 +106,17 @@ Plugins should behave like first-class `netutils` commands:
 
 When the core CLI runs with `--json`, it forwards `--json` to the plugin. Plugin JSON should be a single JSON value printed to stdout.
 
+The core also passes a small environment protocol to every plugin process:
+
+| Variable | Values | Meaning |
+|----------|--------|---------|
+| `NETUTILS_OUTPUT` | `human`, `json` | Requested output mode |
+| `NETUTILS_COLOR` | `auto`, `always`, `never` | Requested color mode |
+| `NETUTILS_CORE_VERSION` | semver string | Core CLI version dispatching the plugin |
+| `NETUTILS_PLUGIN_NAME` | command name | External command name used by the user |
+
+Plugins should prefer explicit CLI flags when present, then fall back to these environment variables. `netutils-plugin-sdk` already does this for output and color mode.
+
 ## Output Guidelines
 
 Human output should answer three questions:
@@ -180,6 +191,7 @@ Before release, also test installation through the core CLI:
 cd <path-to-netutils-cli>
 cargo run -- install <plugin-name> --path <path-to-netutils-plugins>/plugins/<plugin-name> --force
 cargo run -- <plugin-name> --help
+cargo run -- plugin validate <path-to-netutils-plugins>/plugins/<plugin-name>
 ```
 
 ## Release Checklist

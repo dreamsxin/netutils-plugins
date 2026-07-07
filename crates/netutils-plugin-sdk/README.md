@@ -7,7 +7,8 @@ The SDK keeps plugin output conventions consistent without moving rendering into
 ## Features
 
 - `OutputMode` for human vs JSON output
-- `ColorMode` with `NO_COLOR` support
+- `ColorMode` with `NO_COLOR` and `NETUTILS_COLOR` support
+- `NETUTILS_OUTPUT=json` support
 - JSON printing helpers
 - small table renderer
 - status text helpers

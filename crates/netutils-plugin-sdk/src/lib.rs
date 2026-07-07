@@ -12,7 +12,10 @@ pub enum OutputMode {
 
 impl OutputMode {
     pub fn from_json_flag(json: bool) -> Self {
-        if json {
+        let env_json = env::var("NETUTILS_OUTPUT")
+            .map(|value| value.eq_ignore_ascii_case("json"))
+            .unwrap_or(false);
+        if json || env_json {
             Self::Json
         } else {
             Self::Human
@@ -36,6 +39,8 @@ impl ColorMode {
         let color = env::var("NETUTILS_COLOR").unwrap_or_default();
         if env::var_os("NO_COLOR").is_some() || color.eq_ignore_ascii_case("never") {
             Self::Never
+        } else if color.eq_ignore_ascii_case("always") {
+            Self::Always
         } else {
             Self::Auto
         }
@@ -156,16 +161,40 @@ fn print_row(row: &[String], widths: &[usize]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn output_mode_uses_json_flag() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        env::remove_var("NETUTILS_OUTPUT");
         assert_eq!(OutputMode::from_json_flag(true), OutputMode::Json);
         assert_eq!(OutputMode::from_json_flag(false), OutputMode::Human);
+    }
+
+    #[test]
+    fn output_mode_reads_env_protocol() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        env::set_var("NETUTILS_OUTPUT", "json");
+        assert_eq!(OutputMode::from_json_flag(false), OutputMode::Json);
+        env::remove_var("NETUTILS_OUTPUT");
     }
 
     #[test]
     fn color_mode_can_disable_paint() {
         assert_eq!(paint("ok", "32", ColorMode::Never), "ok");
         assert_eq!(paint("ok", "32", ColorMode::Always), "\x1b[32mok\x1b[0m");
+    }
+
+    #[test]
+    fn color_mode_reads_env_protocol() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        env::remove_var("NO_COLOR");
+        env::set_var("NETUTILS_COLOR", "always");
+        assert_eq!(ColorMode::from_env(), ColorMode::Always);
+        env::set_var("NETUTILS_COLOR", "never");
+        assert_eq!(ColorMode::from_env(), ColorMode::Never);
+        env::remove_var("NETUTILS_COLOR");
     }
 }
