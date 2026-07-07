@@ -1,0 +1,21 @@
+[package]
+name = "netutils-plugin-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "MCP Streamable HTTP diagnostics plugin for netutils"
+license = "MIT"
+repository = "https://github.com/dreamsxin/netutils-plugins"
+keywords = ["network", "mcp", "http", "diagnostics"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "netutils-mcp"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+colored = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "socks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }

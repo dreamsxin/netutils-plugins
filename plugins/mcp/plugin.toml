@@ -1,0 +1,5 @@
+name = "mcp"
+binary = "netutils-mcp"
+crate = "netutils-plugin-mcp"
+description = "MCP Streamable HTTP diagnostics"
+commands = ["mcp"]
