@@ -1,0 +1,175 @@
+# netutils Plugin Development
+
+This repository hosts external commands for `netutils-cli`. A plugin is a normal executable that follows a few naming, CLI, output, and release conventions so the core CLI can install and dispatch it predictably.
+
+## Repository Layout
+
+Use one workspace with one crate per plugin:
+
+```text
+netutils-plugins/
+  Cargo.toml
+  README.md
+  PLUGIN_DEVELOPMENT.md
+  plugins/
+    <plugin-name>/
+      Cargo.toml
+      plugin.toml
+      src/
+        main.rs
+```
+
+The workspace root `Cargo.toml` should include each plugin crate:
+
+```toml
+[workspace]
+members = ["plugins/mcp"]
+resolver = "2"
+```
+
+## Naming
+
+Keep names stable and mechanical:
+
+| Item | Convention | Example |
+|------|------------|---------|
+| netutils command | short command name | `mcp` |
+| binary | `netutils-<command>` | `netutils-mcp` |
+| crate | `netutils-plugin-<command>` | `netutils-plugin-mcp` |
+| plugin manifest | `plugins/<command>/plugin.toml` | `plugins/mcp/plugin.toml` |
+
+The core CLI dispatches an unknown command such as `netutils mcp ...` to the installed binary `netutils-mcp`.
+
+## Plugin Manifest
+
+Each plugin should include `plugin.toml`:
+
+```toml
+name = "mcp"
+binary = "netutils-mcp"
+crate = "netutils-plugin-mcp"
+description = "MCP Streamable HTTP diagnostics"
+commands = ["mcp"]
+```
+
+Fields:
+
+| Field | Meaning |
+|-------|---------|
+| `name` | canonical plugin name used by `netutils install <name>` |
+| `binary` | executable name installed by Cargo |
+| `crate` | crates.io package name |
+| `description` | short user-facing description |
+| `commands` | external command names provided by the plugin |
+
+## CLI Contract
+
+Plugins should behave like first-class `netutils` commands:
+
+- Use `clap` or an equivalent parser.
+- Support `--json` for machine-readable output.
+- Support `--timeout <SECONDS>` for network operations.
+- Support `--proxy <URL>` and `--no-proxy` when the command performs outbound HTTP/TCP requests.
+- Print concise human-readable output by default.
+- Return a non-zero exit code when the operation fails.
+- Keep positional arguments and option names stable after release.
+
+When the core CLI runs with `--json`, it forwards `--json` to the plugin. Plugin JSON should be a single JSON value printed to stdout.
+
+## Output Guidelines
+
+Human output should answer three questions:
+
+- What endpoint or target was tested?
+- Which phases succeeded or failed?
+- What data should the user act on next?
+
+JSON output should preserve raw protocol details when useful. For diagnostic commands, prefer this shape:
+
+```json
+{
+  "target": "...",
+  "summary": ["..."],
+  "phases": {
+    "connect": {
+      "ok": true,
+      "elapsed_ms": 12.3
+    }
+  }
+}
+```
+
+Use stable field names. Add new fields instead of renaming existing fields.
+
+## Installation
+
+For released plugins, users install through the core CLI:
+
+```bash
+netutils install mcp
+netutils mcp https://example.com/mcp
+```
+
+For local development, install from a checkout:
+
+```bash
+cd <path-to-netutils-cli>
+cargo run -- install mcp --path <path-to-netutils-plugins>/plugins/mcp --force
+cargo run -- mcp https://example.com/mcp
+```
+
+The core CLI may also auto-detect a sibling `netutils-plugins/plugins/<name>` checkout during development, but documentation and tests should use explicit `--path` when demonstrating local installs.
+
+## Testing
+
+Each plugin crate should include unit tests for:
+
+- argument parsing helpers
+- protocol response parsing
+- timeout and error classification helpers
+- JSON output shape for important failure paths
+
+Run all plugin tests from the workspace root:
+
+```bash
+cargo test
+```
+
+Before release, also test installation through the core CLI:
+
+```bash
+cd <path-to-netutils-cli>
+cargo run -- install <plugin-name> --path <path-to-netutils-plugins>/plugins/<plugin-name> --force
+cargo run -- <plugin-name> --help
+```
+
+## Release Checklist
+
+Before publishing a plugin:
+
+1. Update `plugins/<plugin-name>/Cargo.toml` version.
+2. Update `README.md` examples if command behavior changed.
+3. Run `cargo fmt`.
+4. Run `cargo test`.
+5. Run `cargo publish -p netutils-plugin-<plugin-name> --dry-run`.
+6. Commit the changes.
+7. Run `cargo publish -p netutils-plugin-<plugin-name>`.
+
+Publish plugin crates before publishing a core CLI release that references them, so `netutils install <plugin-name>` can resolve the crate from crates.io.
+
+## Compatibility
+
+Plugins should be tolerant of older core dispatch behavior when practical, but should not silently accept ambiguous user input. A good pattern is to accept one known legacy shape and reject all other unexpected positional arguments with a clear message.
+
+Avoid depending on private core internals. The stable integration surface is:
+
+- the installed binary name
+- forwarded CLI arguments
+- `--json` propagation
+- Cargo installation by crate name or local `--path`
+
+## Current Plugins
+
+| Plugin | Crate | Binary | Status |
+|--------|-------|--------|--------|
+| `mcp` | `netutils-plugin-mcp` | `netutils-mcp` | published |

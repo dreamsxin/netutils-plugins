@@ -43,6 +43,18 @@ struct Cli {
     #[arg(long)]
     no_tools: bool,
 
+    /// Call a tool after initialization
+    #[arg(long)]
+    tool: Option<String>,
+
+    /// JSON object passed as tools/call arguments
+    #[arg(long = "args", default_value = "{}")]
+    tool_args: String,
+
+    /// Require the tool to be present in tools/list before calling it
+    #[arg(long)]
+    require_tool: bool,
+
     /// Open GET server-to-client SSE stream after initialization
     #[arg(long)]
     listen: bool,
@@ -74,6 +86,7 @@ struct Report {
     initialize: Exchange,
     initialized_notification: Option<Exchange>,
     tools_list: Option<Exchange>,
+    tool_call: Option<Exchange>,
     listen: Option<ListenResult>,
     summary: Vec<String>,
     notes: Vec<String>,
@@ -145,6 +158,13 @@ async fn main() {
 
     let headers = match parse_headers(&cli.headers) {
         Ok(headers) => headers,
+        Err(err) => {
+            output(error_report(&url, &cli.protocol_version, err), cli.json);
+            return;
+        }
+    };
+    let tool_args = match parse_tool_arguments(&cli.tool_args) {
+        Ok(args) => args,
         Err(err) => {
             output(error_report(&url, &cli.protocol_version, err), cli.json);
             return;
@@ -240,6 +260,52 @@ async fn main() {
         None
     };
 
+    let tool_call = if initialized {
+        match cli.tool.as_deref() {
+            Some(tool_name) if cli.require_tool && tools_list.is_none() => Some(failed_exchange(
+                &format!("tools/call {tool_name}"),
+                "--require-tool needs tools/list; remove --no-tools or --require-tool".to_string(),
+            )),
+            Some(tool_name)
+                if cli.require_tool
+                    && tools_list
+                        .as_ref()
+                        .map(|tools| !contains_tool(tools, tool_name))
+                        .unwrap_or(true) =>
+            {
+                Some(failed_exchange(
+                    &format!("tools/call {tool_name}"),
+                    format!("tool not found in tools/list: {tool_name}"),
+                ))
+            }
+            Some(tool_name) => Some(
+                post_json_rpc(
+                    &client,
+                    &url,
+                    &headers,
+                    session_id.as_deref(),
+                    Some(&cli.protocol_version),
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {
+                            "name": tool_name,
+                            "arguments": tool_args
+                        }
+                    }),
+                    Some(3),
+                    timeout,
+                    &format!("tools/call {tool_name}"),
+                )
+                .await,
+            ),
+            None => None,
+        }
+    } else {
+        None
+    };
+
     let listen = if initialized && cli.listen {
         Some(
             listen_stream(
@@ -266,6 +332,7 @@ async fn main() {
             initialize,
             initialized_notification,
             tools_list,
+            tool_call,
             listen,
         ),
         cli.json,
@@ -527,6 +594,16 @@ fn parse_headers(raw_headers: &[String]) -> Result<HeaderMap, String> {
     Ok(headers)
 }
 
+fn parse_tool_arguments(raw: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| format!("invalid --args JSON object: {err}"))?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err("--args must be a JSON object".to_string())
+    }
+}
+
 impl SseParser {
     fn push(&mut self, bytes: &[u8]) -> Vec<SseEvent> {
         self.buffer.push_str(&String::from_utf8_lossy(bytes));
@@ -636,6 +713,7 @@ fn report(
     initialize: Exchange,
     initialized_notification: Option<Exchange>,
     tools_list: Option<Exchange>,
+    tool_call: Option<Exchange>,
     listen: Option<ListenResult>,
 ) -> Report {
     let initialized = initialize.ok
@@ -659,6 +737,13 @@ fn report(
             "tools/list failed".to_string()
         });
     }
+    if let Some(call) = &tool_call {
+        summary.push(if call.ok {
+            format!("{} succeeded", call.name)
+        } else {
+            format!("{} failed", call.name)
+        });
+    }
     Report {
         url,
         protocol_version,
@@ -668,6 +753,7 @@ fn report(
         initialize,
         initialized_notification,
         tools_list,
+        tool_call,
         listen,
         summary,
         notes: vec![
@@ -684,6 +770,7 @@ fn error_report(url: &str, protocol_version: &str, error: String) -> Report {
         proxy_info(None, true),
         None,
         failed_exchange("initialize", error),
+        None,
         None,
         None,
         None,
@@ -704,6 +791,36 @@ fn count_tools(exchange: &Exchange) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or(0)
+}
+
+fn contains_tool(exchange: &Exchange, name: &str) -> bool {
+    tool_list_value(exchange)
+        .and_then(|value| value.pointer("/result/tools"))
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+        })
+        .unwrap_or(false)
+}
+
+fn tool_list_value(exchange: &Exchange) -> Option<&Value> {
+    exchange.response.as_ref().or_else(|| {
+        exchange
+            .sse_messages
+            .iter()
+            .find(|value| value.get("result").is_some())
+    })
+}
+
+fn exchange_payload_value(exchange: &Exchange) -> Option<&Value> {
+    exchange.response.as_ref().or_else(|| {
+        exchange
+            .sse_messages
+            .iter()
+            .find(|value| value.get("result").is_some() || value.get("error").is_some())
+    })
 }
 
 fn renumber(events: Vec<SseEvent>) -> Vec<SseEvent> {
@@ -780,6 +897,10 @@ fn print_report(report: &Report) {
         print_exchange(exchange);
         print_tools(exchange);
     }
+    if let Some(exchange) = &report.tool_call {
+        print_exchange(exchange);
+        print_tool_call(exchange);
+    }
     if let Some(listen) = &report.listen {
         println!();
         println!("{}", "Listen Stream".bold());
@@ -820,12 +941,7 @@ fn print_exchange(exchange: &Exchange) {
 }
 
 fn print_tools(exchange: &Exchange) {
-    let Some(value) = exchange.response.as_ref().or_else(|| {
-        exchange
-            .sse_messages
-            .iter()
-            .find(|value| value.get("result").is_some())
-    }) else {
+    let Some(value) = tool_list_value(exchange) else {
         return;
     };
     let Some(tools) = value.pointer("/result/tools").and_then(Value::as_array) else {
@@ -848,6 +964,14 @@ fn print_tools(exchange: &Exchange) {
             )
         );
     }
+}
+
+fn print_tool_call(exchange: &Exchange) {
+    let Some(value) = exchange_payload_value(exchange) else {
+        return;
+    };
+    let formatted = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+    println!("  Result: {}", truncate(&formatted, 2000));
 }
 
 fn elapsed_ms(start: Instant) -> f64 {
@@ -884,6 +1008,19 @@ mod tests {
             "result": { "tools": [{ "name": "a" }, { "name": "b" }] }
         }));
         assert_eq!(count_tools(&exchange), 2);
+        assert!(contains_tool(&exchange, "a"));
+        assert!(!contains_tool(&exchange, "missing"));
+    }
+
+    #[test]
+    fn parses_tool_arguments_as_json_object() {
+        assert_eq!(parse_tool_arguments("{}").unwrap(), json!({}));
+        assert_eq!(
+            parse_tool_arguments("{\"action\":\"list\"}").unwrap(),
+            json!({ "action": "list" })
+        );
+        assert!(parse_tool_arguments("[]").is_err());
+        assert!(parse_tool_arguments("{").is_err());
     }
 
     #[test]
@@ -910,6 +1047,9 @@ mod tests {
             timeout: 10,
             protocol_version: "2025-11-25".to_string(),
             no_tools: false,
+            tool: None,
+            tool_args: "{}".to_string(),
+            require_tool: false,
             listen: false,
             max_events: 5,
             max_seconds: 30,

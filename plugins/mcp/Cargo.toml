@@ -1,10 +1,11 @@
 [package]
 name = "netutils-plugin-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "MCP Streamable HTTP diagnostics plugin for netutils"
 license = "MIT"
 repository = "https://github.com/dreamsxin/netutils-plugins"
+readme = "README.md"
 keywords = ["network", "mcp", "http", "diagnostics"]
 categories = ["command-line-utilities", "network-programming"]
 
