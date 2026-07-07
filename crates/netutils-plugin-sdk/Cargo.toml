@@ -1,0 +1,15 @@
+[package]
+name = "netutils-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Small helper SDK for netutils external plugins"
+license = "MIT"
+repository = "https://github.com/dreamsxin/netutils-plugins"
+readme = "README.md"
+keywords = ["network", "cli", "plugin", "netutils"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-width = "0.2"

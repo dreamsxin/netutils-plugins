@@ -20,6 +20,10 @@ cargo run -- mcp https://example.com/mcp
 
 See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for plugin layout, command conventions, testing, and release guidance.
 
+## SDK
+
+This workspace includes `netutils-plugin-sdk`, a small helper crate for plugin authors. It provides shared output primitives such as `OutputMode`, JSON printing, status text, color handling, and a small table renderer. Plugins still own their command-specific human output and JSON report schema.
+
 ## Plugins
 
 | Plugin | Binary | Description |

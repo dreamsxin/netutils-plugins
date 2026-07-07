@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use colored::*;
+use netutils_plugin_sdk::{print_json, OutputMode};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -864,10 +865,9 @@ fn failed_listen(error: String, elapsed: Duration) -> ListenResult {
 }
 
 fn output(report: Report, json: bool) {
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    } else {
-        print_report(&report);
+    match OutputMode::from_json_flag(json) {
+        OutputMode::Json => print_json(&report),
+        OutputMode::Human => print_report(&report),
     }
 }
 

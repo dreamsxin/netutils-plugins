@@ -11,6 +11,11 @@ netutils-plugins/
   Cargo.toml
   README.md
   PLUGIN_DEVELOPMENT.md
+  crates/
+    netutils-plugin-sdk/
+      Cargo.toml
+      src/
+        lib.rs
   plugins/
     <plugin-name>/
       Cargo.toml
@@ -23,8 +28,33 @@ The workspace root `Cargo.toml` should include each plugin crate:
 
 ```toml
 [workspace]
-members = ["plugins/mcp"]
+members = ["crates/netutils-plugin-sdk", "plugins/mcp"]
 resolver = "2"
+```
+
+## SDK
+
+`netutils-plugin-sdk` is a lightweight helper crate for shared conventions. It does not move plugin rendering into the core CLI; it only gives plugins common building blocks:
+
+- `OutputMode` for human vs JSON output
+- `ColorMode` with `NO_COLOR` and `NETUTILS_COLOR=never` support
+- `print_json`
+- small table rendering
+- status and error text helpers
+- lightweight `PluginError` and `Result`
+
+Use it from plugin crates:
+
+```toml
+[dependencies]
+netutils-plugin-sdk = "0.1"
+```
+
+Local workspace plugins can use a path dependency while developing:
+
+```toml
+[dependencies]
+netutils-plugin-sdk = { version = "0.1", path = "../../crates/netutils-plugin-sdk" }
 ```
 
 ## Naming
@@ -120,6 +150,15 @@ cargo run -- mcp https://example.com/mcp
 
 The core CLI may also auto-detect a sibling `netutils-plugins/plugins/<name>` checkout during development, but documentation and tests should use explicit `--path` when demonstrating local installs.
 
+To create a new Rust plugin scaffold from the core CLI:
+
+```bash
+netutils plugin new whois
+netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
+```
+
+The scaffold includes `Cargo.toml`, `plugin.toml`, `README.md`, and `src/main.rs`. It uses `netutils-plugin-sdk` for basic output conventions.
+
 ## Testing
 
 Each plugin crate should include unit tests for:
@@ -147,13 +186,14 @@ cargo run -- <plugin-name> --help
 
 Before publishing a plugin:
 
-1. Update `plugins/<plugin-name>/Cargo.toml` version.
-2. Update `README.md` examples if command behavior changed.
-3. Run `cargo fmt`.
-4. Run `cargo test`.
-5. Run `cargo publish -p netutils-plugin-<plugin-name> --dry-run`.
-6. Commit the changes.
-7. Run `cargo publish -p netutils-plugin-<plugin-name>`.
+1. Publish any required SDK version first, if the plugin depends on a new SDK release.
+2. Update `plugins/<plugin-name>/Cargo.toml` version.
+3. Update `README.md` examples if command behavior changed.
+4. Run `cargo fmt`.
+5. Run `cargo test`.
+6. Run `cargo publish -p netutils-plugin-<plugin-name> --dry-run`.
+7. Commit the changes.
+8. Run `cargo publish -p netutils-plugin-<plugin-name>`.
 
 Publish plugin crates before publishing a core CLI release that references them, so `netutils install <plugin-name>` can resolve the crate from crates.io.
 
