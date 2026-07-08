@@ -1,0 +1,5 @@
+name = "ws"
+binary = "netutils-ws"
+crate = "netutils-plugin-ws"
+description = "WebSocket diagnostics"
+commands = ["ws", "websocket"]

@@ -8,6 +8,10 @@ The core CLI discovers plugins as external subcommands. For example:
 netutils install mcp
 netutils mcp https://example.com/mcp
 netutils mcp https://example.com/mcp --tool tabs --args '{"action":"list"}'
+netutils install sse
+netutils sse https://example.com/events
+netutils install ws
+netutils ws wss://echo.websocket.events --message ping
 ```
 
 During local development, install a plugin from a local checkout:
@@ -16,6 +20,10 @@ During local development, install a plugin from a local checkout:
 cd <path-to-netutils-cli>
 cargo run -- install mcp --path <path-to-netutils-plugins>/plugins/mcp --force
 cargo run -- mcp https://example.com/mcp
+cargo run -- install sse --path <path-to-netutils-plugins>/plugins/sse --force
+cargo run -- sse https://example.com/events
+cargo run -- install ws --path <path-to-netutils-plugins>/plugins/ws --force
+cargo run -- ws wss://echo.websocket.events --message ping
 ```
 
 See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for plugin layout, command conventions, testing, and release guidance.
@@ -29,6 +37,8 @@ This workspace includes `netutils-plugin-sdk`, a small helper crate for plugin a
 | Plugin | Binary | Description |
 |--------|--------|-------------|
 | `mcp` | `netutils-mcp` | MCP Streamable HTTP diagnostics |
+| `sse` | `netutils-sse` | Server-Sent Events diagnostics |
+| `ws` | `netutils-ws` | WebSocket diagnostics |
 
 ## MCP plugin
 
@@ -60,3 +70,29 @@ Options for calling a tool:
 | `--no-tools` | Skips `tools/list`; cannot be combined meaningfully with `--require-tool` |
 
 The plugin accepts both `application/json` and `text/event-stream` JSON-RPC responses. JSON output includes the raw `tools/call` response under `tool_call`.
+
+## SSE plugin
+
+The SSE plugin connects to a `text/event-stream` endpoint and parses `event`, `id`, `retry`, and `data` fields.
+
+Examples:
+
+```bash
+netutils sse https://example.com/events
+netutils sse https://example.com/events -H "Authorization: Bearer xxx"
+netutils sse https://example.com/events --max-events 10 --max-seconds 60
+netutils sse https://example.com/events --proxy http://127.0.0.1:7897
+```
+
+## WebSocket plugin
+
+The WebSocket plugin performs a WebSocket handshake, sends optional text messages, and receives the first messages.
+
+Examples:
+
+```bash
+netutils ws wss://echo.websocket.events
+netutils ws wss://echo.websocket.events --message ping
+netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
+netutils websocket wss://echo.websocket.events --message ping
+```

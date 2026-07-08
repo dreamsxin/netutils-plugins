@@ -28,7 +28,12 @@ The workspace root `Cargo.toml` should include each plugin crate:
 
 ```toml
 [workspace]
-members = ["crates/netutils-plugin-sdk", "plugins/mcp"]
+members = [
+    "crates/netutils-plugin-sdk",
+    "plugins/mcp",
+    "plugins/sse",
+    "plugins/ws",
+]
 resolver = "2"
 ```
 
