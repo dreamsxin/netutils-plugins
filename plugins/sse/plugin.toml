@@ -3,3 +3,4 @@ binary = "netutils-sse"
 crate = "netutils-plugin-sse"
 description = "Server-Sent Events diagnostics"
 commands = ["sse"]
+platforms = ["windows", "linux", "macos"]

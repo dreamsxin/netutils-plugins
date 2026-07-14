@@ -34,11 +34,11 @@ This workspace includes `netutils-plugin-sdk`, a small helper crate for plugin a
 
 ## Plugins
 
-| Plugin | Binary | Description |
-|--------|--------|-------------|
-| `mcp` | `netutils-mcp` | MCP Streamable HTTP diagnostics |
-| `sse` | `netutils-sse` | Server-Sent Events diagnostics |
-| `ws` | `netutils-ws` | WebSocket diagnostics |
+| Plugin | Binary | Platforms | Description |
+|--------|--------|-----------|-------------|
+| `mcp` | `netutils-mcp` | windows, linux, macos | MCP Streamable HTTP diagnostics |
+| `sse` | `netutils-sse` | windows, linux, macos | Server-Sent Events diagnostics |
+| `ws` | `netutils-ws` | windows, linux, macos | WebSocket diagnostics |
 
 ## MCP plugin
 

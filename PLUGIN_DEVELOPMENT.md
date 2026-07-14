@@ -85,6 +85,7 @@ binary = "netutils-mcp"
 crate = "netutils-plugin-mcp"
 description = "MCP Streamable HTTP diagnostics"
 commands = ["mcp"]
+platforms = ["windows", "linux", "macos"]
 ```
 
 Fields:
@@ -96,6 +97,9 @@ Fields:
 | `crate` | crates.io package name |
 | `description` | short user-facing description |
 | `commands` | external command names provided by the plugin |
+| `platforms` | optional installable platforms; omit for all platforms, or use `windows`, `linux`, and/or `macos` |
+
+The core CLI refuses to install a known plugin when the current platform is not listed in `platforms`, and `netutils plugin list` shows both supported platforms and whether the plugin is installable on the current host.
 
 ## CLI Contract
 
