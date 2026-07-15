@@ -3,6 +3,7 @@ members = [
     "crates/netutils-plugin-sdk",
     "plugins/mcp",
     "plugins/sse",
+    "plugins/subdomain",
     "plugins/ws",
 ]
 resolver = "2"

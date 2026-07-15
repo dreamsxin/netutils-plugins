@@ -12,6 +12,8 @@ netutils install sse
 netutils sse https://example.com/events
 netutils install ws
 netutils ws wss://echo.websocket.events --message ping
+netutils install subdomain
+netutils subdomain example.com
 ```
 
 During local development, install a plugin from a local checkout:
@@ -24,6 +26,8 @@ cargo run -- install sse --path <path-to-netutils-plugins>/plugins/sse --force
 cargo run -- sse https://example.com/events
 cargo run -- install ws --path <path-to-netutils-plugins>/plugins/ws --force
 cargo run -- ws wss://echo.websocket.events --message ping
+cargo run -- install subdomain --path <path-to-netutils-plugins>/plugins/subdomain --force
+cargo run -- subdomain example.com
 ```
 
 See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for plugin layout, command conventions, testing, and release guidance.
@@ -38,6 +42,7 @@ This workspace includes `netutils-plugin-sdk`, a small helper crate for plugin a
 |--------|--------|-----------|-------------|
 | `mcp` | `netutils-mcp` | windows, linux, macos | MCP Streamable HTTP diagnostics |
 | `sse` | `netutils-sse` | windows, linux, macos | Server-Sent Events diagnostics |
+| `subdomain` | `netutils-subdomain` | windows, linux, macos | Passive subdomain discovery from certificate transparency logs |
 | `ws` | `netutils-ws` | windows, linux, macos | WebSocket diagnostics |
 
 ## MCP plugin
@@ -95,4 +100,17 @@ netutils ws wss://echo.websocket.events
 netutils ws wss://echo.websocket.events --message ping
 netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
 netutils websocket wss://echo.websocket.events --message ping
+```
+
+## Subdomain plugin
+
+The Subdomain plugin discovers names below a domain from public certificate transparency logs. It is passive discovery, not a guaranteed full DNS zone dump.
+
+Examples:
+
+```bash
+netutils subdomain example.com
+netutils subdomain example.com --max 100
+netutils subdomain example.com --include-wildcards
+netutils --json subdomain example.com
 ```

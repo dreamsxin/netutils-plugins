@@ -1,0 +1,6 @@
+name = "subdomain"
+binary = "netutils-subdomain"
+crate = "netutils-plugin-subdomain"
+description = "Discover subdomains from public certificate transparency logs"
+commands = ["subdomain"]
+platforms = ["windows", "linux", "macos"]
