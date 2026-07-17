@@ -123,11 +123,11 @@ pub fn proxy_for_url(target: &str, explicit: Option<String>, no_proxy: bool) -> 
     if proxy_bypassed(target) {
         return None;
     }
-    let is_http = target
+    let is_http_like = target
         .split_once("://")
-        .map(|(scheme, _)| scheme.eq_ignore_ascii_case("http"))
+        .map(|(scheme, _)| scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("ws"))
         .unwrap_or(false);
-    let vars: &[&str] = if is_http {
+    let vars: &[&str] = if is_http_like {
         &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
     } else {
         &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
@@ -249,9 +249,17 @@ fn print_row(row: &[String], widths: &[usize]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env(name: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => env::set_var(name, value),
+            None => env::remove_var(name),
+        }
+    }
 
     #[test]
     fn output_mode_uses_json_flag() {
@@ -312,5 +320,27 @@ mod tests {
             true
         )
         .is_none());
+    }
+
+    #[test]
+    fn websocket_urls_use_matching_proxy_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_http = env::var_os("HTTP_PROXY");
+        let old_https = env::var_os("HTTPS_PROXY");
+        let old_no_proxy = env::var_os("NO_PROXY");
+        env::set_var("HTTP_PROXY", "http://plain-proxy:8080");
+        env::set_var("HTTPS_PROXY", "http://tls-proxy:8080");
+        env::remove_var("NO_PROXY");
+        assert_eq!(
+            proxy_for_url("ws://example.com/socket", None, false),
+            Some("http://plain-proxy:8080".to_string())
+        );
+        assert_eq!(
+            proxy_for_url("wss://example.com/socket", None, false),
+            Some("http://tls-proxy:8080".to_string())
+        );
+        restore_env("HTTP_PROXY", old_http);
+        restore_env("HTTPS_PROXY", old_https);
+        restore_env("NO_PROXY", old_no_proxy);
     }
 }

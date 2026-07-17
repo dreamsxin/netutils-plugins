@@ -13,7 +13,7 @@ The SDK keeps plugin output conventions consistent without moving rendering into
 - small table renderer
 - status text helpers
 - lightweight `PluginError` and `Result`
-- `proxy_for_url` support for explicit/core-forwarded/environment proxies
+- `proxy_for_url` support for explicit/core-forwarded/environment proxies, including `http/ws` and `https/wss` environment matching
 - proxy URL and sensitive header redaction
 - consistent non-zero failure exits
 

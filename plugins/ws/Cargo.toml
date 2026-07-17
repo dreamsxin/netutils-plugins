@@ -1,6 +1,6 @@
 [package]
 name = "netutils-plugin-ws"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "WebSocket diagnostics plugin for netutils"
 license = "MIT"
@@ -19,10 +19,12 @@ path = "src/bin/netutils-websocket.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+base64 = "0.22"
 colored = "2"
 futures-util = "0.3"
-netutils-plugin-sdk = { version = "0.1.2", path = "../../crates/netutils-plugin-sdk" }
+netutils-plugin-sdk = { version = "0.1.3", path = "../../crates/netutils-plugin-sdk" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+url = "2"
