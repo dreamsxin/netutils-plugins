@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use colored::*;
 use futures_util::{SinkExt, StreamExt};
-use netutils_plugin_sdk::{print_json, print_table, OutputMode};
+use netutils_plugin_sdk::{exit_on_failure, print_json, print_table, OutputMode};
 use serde::Serialize;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -141,7 +141,7 @@ pub async fn run(
 
     let mut sent = Vec::new();
     for (idx, message) in messages.into_iter().enumerate() {
-        let bytes = message.as_bytes().len();
+        let bytes = message.len();
         match tokio::time::timeout(timeout, stream.send(Message::Text(message.clone().into())))
             .await
         {
@@ -259,7 +259,7 @@ fn convert_message(index: usize, message: Message) -> WsMessage {
             WsMessage {
                 index,
                 kind: "text".to_string(),
-                bytes: text.as_bytes().len(),
+                bytes: text.len(),
                 text: Some(text),
             }
         }
@@ -309,6 +309,7 @@ fn error_report(input_url: &str, url: &str, error: String, elapsed: Duration) ->
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report(
     input_url: &str,
     url: &str,
@@ -336,11 +337,13 @@ fn report(
 }
 
 fn output(report: WsReport, mode: OutputMode) {
+    let failed = !report.connected || report.error.is_some();
     if mode == OutputMode::Json {
         print_json(&report);
     } else {
         print_report(&report);
     }
+    exit_on_failure(failed);
 }
 
 fn print_report(report: &WsReport) {

@@ -1,13 +1,12 @@
 //! Server-Sent Events diagnostics.
 
-use std::{
-    env,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use colored::*;
-use netutils_plugin_sdk::{print_json, print_table, OutputMode};
+use netutils_plugin_sdk::{
+    exit_on_failure, print_json, print_table, proxy_for_url, redact_url_credentials, OutputMode,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT};
 use serde::Serialize;
 
@@ -104,6 +103,7 @@ struct SseEventBuilder {
     data_lines: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     input_url: &str,
     raw_headers: Vec<String>,
@@ -123,11 +123,7 @@ pub async fn run(
             return;
         }
     };
-    let proxy_value = if no_proxy {
-        None
-    } else {
-        proxy.or_else(get_system_proxy_addr)
-    };
+    let proxy_value = proxy_for_url(&url, proxy, no_proxy);
     let proxy_info = SseProxy {
         mode: if no_proxy {
             "direct-forced".to_string()
@@ -136,7 +132,7 @@ pub async fn run(
         } else {
             "direct".to_string()
         },
-        value: proxy_value.clone(),
+        value: proxy_value.as_deref().map(redact_url_credentials),
     };
 
     let client = match build_client(timeout, proxy_value.as_deref()) {
@@ -354,17 +350,6 @@ fn normalize_url(input: &str) -> String {
     }
 }
 
-fn get_system_proxy_addr() -> Option<String> {
-    for var in ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] {
-        if let Ok(value) = env::var(var) {
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
 fn build_client(timeout: Duration, proxy: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(timeout)
@@ -410,6 +395,7 @@ fn error_report(input_url: &str, url: &str, error: String, elapsed: Duration) ->
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report(
     input_url: &str,
     url: &str,
@@ -440,11 +426,13 @@ fn report(
 }
 
 fn output(report: SseReport, mode: OutputMode) {
+    let failed = !report.connected || report.error.is_some();
     if mode == OutputMode::Json {
         print_json(&report);
     } else {
         print_report(&report);
     }
+    exit_on_failure(failed);
 }
 
 fn print_report(report: &SseReport) {

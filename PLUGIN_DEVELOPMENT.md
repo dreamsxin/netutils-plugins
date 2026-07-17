@@ -47,6 +47,8 @@ resolver = "2"
 - small table rendering
 - status and error text helpers
 - lightweight `PluginError` and `Result`
+- proxy selection forwarded by the core
+- credential/header redaction and failure exit helpers
 
 Use it from plugin crates:
 
@@ -123,8 +125,9 @@ The core also passes a small environment protocol to every plugin process:
 | `NETUTILS_COLOR` | `auto`, `always`, `never` | Requested color mode |
 | `NETUTILS_CORE_VERSION` | semver string | Core CLI version dispatching the plugin |
 | `NETUTILS_PLUGIN_NAME` | command name | External command name used by the user |
+| `NETUTILS_EFFECTIVE_PROXY` | proxy URL | Target-specific system proxy selected by the core, when available |
 
-Plugins should prefer explicit CLI flags when present, then fall back to these environment variables. `netutils-plugin-sdk` already does this for output and color mode.
+Plugins should prefer explicit CLI flags when present, then fall back to these environment variables. `netutils-plugin-sdk` provides `proxy_for_url`, output/color handling, redaction helpers, and `exit_on_failure` for this contract.
 
 ## Output Guidelines
 
@@ -135,6 +138,8 @@ Human output should answer three questions:
 - What data should the user act on next?
 
 JSON output should preserve raw protocol details when useful. For diagnostic commands, prefer this shape:
+
+Never include raw proxy credentials, `Authorization`, cookies, API keys, tokens, or session secrets in either human or JSON reports.
 
 ```json
 {

@@ -86,6 +86,94 @@ pub fn print_json<T: Serialize>(value: &T) {
     }
 }
 
+pub fn redact_url_credentials(value: &str) -> String {
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return value.to_string();
+    };
+    let Some((_, endpoint)) = rest.rsplit_once('@') else {
+        return value.to_string();
+    };
+    format!("{scheme}://***@{endpoint}")
+}
+
+pub fn redact_header_value(name: &str, value: &str) -> String {
+    let name = name.to_ascii_lowercase();
+    let sensitive = matches!(
+        name.as_str(),
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie" | "x-api-key" | "api-key"
+    ) || name.contains("token")
+        || name.contains("secret");
+    if sensitive {
+        "***".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+pub fn proxy_for_url(target: &str, explicit: Option<String>, no_proxy: bool) -> Option<String> {
+    if no_proxy {
+        return None;
+    }
+    if explicit.is_some() {
+        return explicit;
+    }
+    if let Ok(value) = env::var("NETUTILS_EFFECTIVE_PROXY") {
+        return (!value.is_empty()).then_some(value);
+    }
+    if proxy_bypassed(target) {
+        return None;
+    }
+    let is_http = target
+        .split_once("://")
+        .map(|(scheme, _)| scheme.eq_ignore_ascii_case("http"))
+        .unwrap_or(false);
+    let vars: &[&str] = if is_http {
+        &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+    } else {
+        &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
+    };
+    vars.iter()
+        .find_map(|name| env::var(name).ok().filter(|value| !value.is_empty()))
+}
+
+fn proxy_bypassed(target: &str) -> bool {
+    let authority = target
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(target)
+        .split('/')
+        .next()
+        .unwrap_or(target);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) if port.chars().all(|ch| ch.is_ascii_digit()) => host,
+            _ => authority,
+        }
+    }
+    .to_ascii_lowercase();
+    let Some(rules) = env::var("NO_PROXY").or_else(|_| env::var("no_proxy")).ok() else {
+        return false;
+    };
+    rules
+        .split(',')
+        .map(|rule| {
+            rule.trim()
+                .trim_start_matches("*.")
+                .trim_start_matches('.')
+                .to_ascii_lowercase()
+        })
+        .any(|rule| rule == "*" || host == rule || host.ends_with(&format!(".{rule}")))
+}
+
+pub fn exit_on_failure(failed: bool) {
+    if failed {
+        std::process::exit(1);
+    }
+}
+
 pub fn status_text(ok: bool, color: ColorMode) -> String {
     if ok {
         paint("ok", "32", color)
@@ -196,5 +284,33 @@ mod tests {
         env::set_var("NETUTILS_COLOR", "never");
         assert_eq!(ColorMode::from_env(), ColorMode::Never);
         env::remove_var("NETUTILS_COLOR");
+    }
+
+    #[test]
+    fn redacts_credentials_and_headers() {
+        assert_eq!(
+            redact_url_credentials("socks5h://user:pass@example.com:1080"),
+            "socks5h://***@example.com:1080"
+        );
+        assert_eq!(redact_header_value("Authorization", "Bearer secret"), "***");
+    }
+
+    #[test]
+    fn explicit_proxy_has_priority() {
+        assert_eq!(
+            proxy_for_url(
+                "https://example.com",
+                Some("socks5h://127.0.0.1:1080".to_string()),
+                false
+            )
+            .as_deref(),
+            Some("socks5h://127.0.0.1:1080")
+        );
+        assert!(proxy_for_url(
+            "https://example.com",
+            Some("socks5h://127.0.0.1:1080".to_string()),
+            true
+        )
+        .is_none());
     }
 }

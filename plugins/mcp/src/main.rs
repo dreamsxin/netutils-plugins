@@ -2,7 +2,9 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use colored::*;
-use netutils_plugin_sdk::{print_json, OutputMode};
+use netutils_plugin_sdk::{
+    exit_on_failure, print_json, proxy_for_url, redact_url_credentials, OutputMode,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -172,8 +174,9 @@ async fn main() {
         }
     };
 
-    let proxy = proxy_info(cli.proxy.clone(), cli.no_proxy);
-    let client = match build_client(timeout, cli.proxy.as_deref().filter(|_| !cli.no_proxy)) {
+    let proxy_value = proxy_for_url(&url, cli.proxy.clone(), cli.no_proxy);
+    let proxy = proxy_info(proxy_value.clone(), cli.no_proxy);
+    let client = match build_client(timeout, proxy_value.as_deref()) {
         Ok(client) => client,
         Err(err) => {
             output(
@@ -340,6 +343,7 @@ async fn main() {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn post_json_rpc(
     client: &reqwest::Client,
     url: &str,
@@ -702,10 +706,11 @@ fn proxy_info(value: Option<String>, no_proxy: bool) -> ProxyInfo {
         } else {
             "direct".to_string()
         },
-        value,
+        value: value.as_deref().map(redact_url_credentials),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report(
     url: String,
     protocol_version: String,
@@ -865,10 +870,24 @@ fn failed_listen(error: String, elapsed: Duration) -> ListenResult {
 }
 
 fn output(report: Report, json: bool) {
+    let failed = !report.initialized
+        || report
+            .tools_list
+            .as_ref()
+            .is_some_and(|exchange| !exchange.ok)
+        || report
+            .tool_call
+            .as_ref()
+            .is_some_and(|exchange| !exchange.ok)
+        || report
+            .listen
+            .as_ref()
+            .is_some_and(|listen| !listen.connected);
     match OutputMode::from_json_flag(json) {
         OutputMode::Json => print_json(&report),
         OutputMode::Human => print_report(&report),
     }
+    exit_on_failure(failed);
 }
 
 fn print_report(report: &Report) {
