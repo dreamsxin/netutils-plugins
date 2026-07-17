@@ -1,0 +1,6 @@
+name = "chrome-proxy"
+binary = "netutils-chrome-proxy"
+crate = "netutils-plugin-chrome-proxy"
+description = "Launch Chrome through a local chained proxy bridge"
+commands = ["chrome-proxy"]
+platforms = ["windows", "linux", "macos"]

@@ -5,6 +5,8 @@ Official external plugins for `netutils-cli`.
 The core CLI discovers plugins as external subcommands. For example:
 
 ```bash
+netutils install chrome-proxy
+netutils chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890
 netutils install mcp
 netutils mcp https://example.com/mcp
 netutils mcp https://example.com/mcp --tool tabs --args '{"action":"list"}'
@@ -20,6 +22,8 @@ During local development, install a plugin from a local checkout:
 
 ```bash
 cd <path-to-netutils-cli>
+cargo run -- install chrome-proxy --path <path-to-netutils-plugins>/plugins/chrome-proxy --force
+cargo run -- chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890
 cargo run -- install mcp --path <path-to-netutils-plugins>/plugins/mcp --force
 cargo run -- mcp https://example.com/mcp
 cargo run -- install sse --path <path-to-netutils-plugins>/plugins/sse --force
@@ -40,10 +44,23 @@ This workspace includes `netutils-plugin-sdk`, a small helper crate for plugin a
 
 | Plugin | Binary | Platforms | Description |
 |--------|--------|-----------|-------------|
+| `chrome-proxy` | `netutils-chrome-proxy` | windows, linux, macos | Chrome proxy-chain diagnostics through a local bridge |
 | `mcp` | `netutils-mcp` | windows, linux, macos | MCP Streamable HTTP diagnostics |
 | `sse` | `netutils-sse` | windows, linux, macos | Server-Sent Events diagnostics |
-| `subdomain` | `netutils-subdomain` | windows, linux, macos | Passive subdomain discovery from certificate transparency logs |
+| `subdomain` | `netutils-subdomain` | windows, linux, macos | Passive subdomain discovery from public sources |
 | `ws` | `netutils-ws` | windows, linux, macos | WebSocket diagnostics |
+
+## Chrome Proxy plugin
+
+The Chrome Proxy plugin starts a local HTTP proxy bridge, launches Chrome with `--proxy-server` pointing at that bridge, and applies `--host-resolver-rules` so normal hostnames are not resolved by the local browser process.
+
+Examples:
+
+```bash
+netutils chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890
+netutils chrome-proxy https://ipinfo.io --proxy http://user:pass@127.0.0.1:8080
+netutils chrome-proxy https://www.youtube.com --proxy socks5h://127.0.0.1:7890 --show --wait 30
+```
 
 ## MCP plugin
 

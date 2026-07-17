@@ -1,0 +1,24 @@
+[package]
+name = "netutils-plugin-chrome-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "Chrome proxy-chain diagnostics plugin for netutils"
+license = "MIT"
+repository = "https://github.com/dreamsxin/netutils-plugins"
+readme = "README.md"
+keywords = ["network", "proxy", "chrome", "diagnostics"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "netutils-chrome-proxy"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
+netutils-plugin-sdk = { version = "0.1.1", path = "../../crates/netutils-plugin-sdk" }
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tokio-socks = "0.5"
+url = "2"

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/netutils-plugin-sdk",
+    "plugins/chrome-proxy",
     "plugins/mcp",
     "plugins/sse",
     "plugins/subdomain",
