@@ -130,4 +130,19 @@ netutils subdomain example.com
 netutils subdomain example.com --max 100
 netutils subdomain example.com --include-wildcards
 netutils --json subdomain example.com
+
+# Route the passive source lookups through a proxy, or force direct access
+netutils subdomain example.com --proxy socks5h://127.0.0.1:1080
+netutils subdomain example.com --no-proxy
 ```
+
+The report records which proxy was selected, with credentials redacted. Without `--proxy`, the plugin honors the proxy forwarded by the core and then the standard `HTTPS_PROXY`/`NO_PROXY` environment variables; `--no-proxy` forces direct access.
+
+## Output Conventions
+
+All plugins accept `--json` for a single machine-readable JSON value on stdout.
+
+Plugins with colored human output also accept `--color <auto|always|never>` and honor `NO_COLOR`. Color is resolved the same way as in the core CLI, so JSON output is always plain text and redirected output carries no ANSI escapes. When dispatched by the core, the plugin uses the color decision the core already made, which means `netutils --color never <plugin>` works end to end.
+
+See the color and proxy contracts in [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for the exact precedence rules.
+

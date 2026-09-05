@@ -109,6 +109,7 @@ Plugins should behave like first-class `netutils` commands:
 
 - Use `clap` or an equivalent parser.
 - Support `--json` for machine-readable output.
+- Support `--color <auto|always|never>` when the command emits colored human output.
 - Support `--timeout <SECONDS>` for network operations.
 - Support `--proxy <URL>` and `--no-proxy` when the command performs outbound HTTP/TCP requests.
 - Print concise human-readable output by default.
@@ -122,12 +123,50 @@ The core also passes a small environment protocol to every plugin process:
 | Variable | Values | Meaning |
 |----------|--------|---------|
 | `NETUTILS_OUTPUT` | `human`, `json` | Requested output mode |
-| `NETUTILS_COLOR` | `auto`, `always`, `never` | Requested color mode |
+| `NETUTILS_COLOR` | `always`, `never` | Color decision **already resolved** by the core |
 | `NETUTILS_CORE_VERSION` | semver string | Core CLI version dispatching the plugin |
 | `NETUTILS_PLUGIN_NAME` | command name | External command name used by the user |
 | `NETUTILS_EFFECTIVE_PROXY` | proxy URL | Target-specific system proxy selected by the core, when available |
 
-Plugins should prefer explicit CLI flags when present, then fall back to these environment variables. `netutils-plugin-sdk` provides `proxy_for_url`, output/color handling, redaction helpers, and `exit_on_failure` for this contract.
+Plugins should prefer explicit CLI flags when present, then fall back to these environment variables. `netutils-plugin-sdk` provides `proxy_for_url`, output/color handling, redaction helpers, `core_version`/`plugin_name`, and `exit_on_failure` for this contract.
+
+### Color Contract
+
+Resolve color through `netutils_plugin_sdk::color_enabled(requested, output_mode)` rather than deciding locally. It applies this order:
+
+1. the plugin's own `--color`
+2. `NETUTILS_COLOR` forwarded by the core
+3. JSON output mode, which forces plain text so ANSI escapes cannot corrupt parsing
+4. `NO_COLOR` (any non-empty value, per <https://no-color.org>)
+5. `CLICOLOR_FORCE` when set to anything other than `0`
+6. `CLICOLOR=0`
+7. terminal detection on stdout
+
+`NETUTILS_COLOR` deliberately outranks `NO_COLOR`: the core already accounted for `NO_COLOR` when it resolved the value, so re-applying it here would break `netutils --color always <plugin>`.
+
+Plugins that use the `colored` crate should hand the decision to it once at startup instead of threading a flag through every print site:
+
+```rust
+let mode = OutputMode::from_json_flag(cli.json);
+colored::control::set_override(color_enabled(cli.color, mode));
+```
+
+Plugins that build strings by hand can use `paint`, `status_text`, `warn_text`, and `error_text`, all of which take the resolved `bool`.
+
+### Proxy Contract
+
+Always route client construction through `proxy_for_url`, and **explicitly disable environment proxies when no proxy was selected**:
+
+```rust
+let mut builder = reqwest::Client::builder().timeout(timeout);
+match proxy_for_url(target, cli.proxy.clone(), cli.no_proxy) {
+    Some(url) => builder = builder.proxy(reqwest::Proxy::all(&url)?),
+    None => builder = builder.no_proxy(),
+}
+```
+
+Omitting the `None` arm lets `reqwest` silently pick up `HTTP_PROXY`/`HTTPS_PROXY`, which makes `--no-proxy` a no-op. Report the selected proxy in both human and JSON output, redacted with `redact_url_credentials`.
+
 
 ## Output Guidelines
 

@@ -11,7 +11,7 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use clap::Parser;
-use netutils_plugin_sdk::{print_json, print_table, OutputMode};
+use netutils_plugin_sdk::{exit_on_failure, print_json, print_table, OutputMode};
 use serde::Serialize;
 use tempfile::TempDir;
 use tokio::{
@@ -128,9 +128,7 @@ async fn main() {
     let report = run(cli).await;
     let failed = report.error.is_some() || report.successful_tunnels == 0;
     output(&report, mode);
-    if failed {
-        std::process::exit(1);
-    }
+    exit_on_failure(failed);
 }
 
 async fn run(cli: Cli) -> ChromeProxyReport {
