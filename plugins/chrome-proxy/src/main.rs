@@ -11,7 +11,7 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use clap::Parser;
-use netutils_plugin_sdk::{print_json, print_table, OutputMode};
+use netutils_plugin_sdk::{exit_on_failure, print_json, print_table, OutputMode};
 use serde::Serialize;
 use tempfile::TempDir;
 use tokio::{
@@ -128,9 +128,7 @@ async fn main() {
     let report = run(cli).await;
     let failed = report.error.is_some() || report.successful_tunnels == 0;
     output(&report, mode);
-    if failed {
-        std::process::exit(1);
-    }
+    exit_on_failure(failed);
 }
 
 async fn run(cli: Cli) -> ChromeProxyReport {
@@ -366,7 +364,7 @@ async fn handle_client(
     let head = match tokio::time::timeout(timeout, read_http_head(&mut browser)).await {
         Ok(Ok(head)) => head,
         Ok(Err(err)) => {
-            let _ = send_event(
+            send_event(
                 &tx,
                 "UNKNOWN",
                 "--",
@@ -379,7 +377,7 @@ async fn handle_client(
             return;
         }
         Err(_) => {
-            let _ = send_event(
+            send_event(
                 &tx,
                 "UNKNOWN",
                 "--",
@@ -395,7 +393,7 @@ async fn handle_client(
     let request = match parse_browser_request(&head) {
         Ok(request) => request,
         Err(err) => {
-            let _ = send_event(
+            send_event(
                 &tx,
                 "UNKNOWN",
                 "--",
@@ -416,7 +414,7 @@ async fn handle_client(
             let _ = browser
                 .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
                 .await;
-            let _ = send_event(
+            send_event(
                 &tx,
                 &request.method,
                 &request.target.label(),
@@ -443,7 +441,7 @@ async fn handle_client(
         .await
         .is_err()
     {
-        let _ = send_event(
+        send_event(
             &tx,
             &request.method,
             &request.target.label(),
@@ -456,7 +454,7 @@ async fn handle_client(
         return;
     }
 
-    let _ = send_event(
+    send_event(
         &tx,
         &request.method,
         &request.target.label(),
@@ -753,6 +751,12 @@ fn redact_proxy_url(url: &Url) -> String {
     redacted.to_string()
 }
 
+/// 记录一条桥接事件。
+///
+/// 事件只用于最终报告，接收端关闭时调用方无事可做——六处调用点原本全是
+/// `let _ = send_event(..)`，从未读过错误。因此这里直接吞掉 `SendError`，
+/// 而不是把整个 `BridgeEvent` 装进错误里返回（那会让 `Err` 变体大到
+/// 触发 `clippy::result_large_err`）。
 async fn send_event(
     tx: &mpsc::Sender<BridgeEvent>,
     method: &str,
@@ -761,16 +765,17 @@ async fn send_event(
     result: &str,
     start: Instant,
     error: Option<String>,
-) -> Result<(), mpsc::error::SendError<BridgeEvent>> {
-    tx.send(BridgeEvent {
-        method: method.to_string(),
-        target: target.to_string(),
-        upstream: upstream.to_string(),
-        result: result.to_string(),
-        elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-        error,
-    })
-    .await
+) {
+    let _ = tx
+        .send(BridgeEvent {
+            method: method.to_string(),
+            target: target.to_string(),
+            upstream: upstream.to_string(),
+            result: result.to_string(),
+            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            error,
+        })
+        .await;
 }
 
 fn drain_events(rx: &mut mpsc::Receiver<BridgeEvent>, requests: &mut Vec<BridgeEvent>) {

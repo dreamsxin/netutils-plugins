@@ -1,6 +1,6 @@
 [package]
 name = "netutils-plugin-ws"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "WebSocket diagnostics plugin for netutils"
 license = "MIT"
@@ -9,10 +9,15 @@ readme = "README.md"
 keywords = ["network", "websocket", "diagnostics"]
 categories = ["command-line-utilities", "network-programming"]
 
+[lib]
+name = "netutils_plugin_ws"
+path = "src/lib.rs"
+
 [[bin]]
 name = "netutils-ws"
 path = "src/main.rs"
 
+# `websocket` 是保留的旧命令别名，与 netutils-ws 行为一致，共用同一份 lib 实现。
 [[bin]]
 name = "netutils-websocket"
 path = "src/bin/netutils-websocket.rs"
@@ -22,7 +27,7 @@ clap = { version = "4.5", features = ["derive"] }
 base64 = "0.22"
 colored = "2"
 futures-util = "0.3"
-netutils-plugin-sdk = { version = "0.1.3", path = "../../crates/netutils-plugin-sdk" }
+netutils-plugin-sdk = { version = "0.2", path = "../../crates/netutils-plugin-sdk" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

@@ -1,5 +1,18 @@
+//! netutils 插件公共 SDK。
+//!
+//! 这里定义的是插件与核心之间的**契约**：输出模式、颜色、代理和脱敏行为
+//! 必须与 `netutils` 核心保持一致，否则同一个开关在核心和插件上表现不同。
+//!
+//! 核心通过环境变量向插件传递已解析好的上下文：
+//!
+//! - `NETUTILS_OUTPUT=json` —— 输出模式
+//! - `NETUTILS_COLOR=always|never` —— 核心已解析完成的颜色决定
+//! - `NETUTILS_EFFECTIVE_PROXY` —— 针对目标选定的代理
+//! - `NETUTILS_CORE_VERSION` / `NETUTILS_PLUGIN_NAME` —— 调用方身份
+
 use std::env;
 use std::fmt;
+use std::io::IsTerminal;
 
 use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
@@ -27,28 +40,136 @@ impl OutputMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 颜色请求。这是**意图**，不是最终结果；最终结果由 [`color_enabled`] 给出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorMode {
+    /// 自动判断（默认）
+    #[default]
     Auto,
+    /// 始终上色
     Always,
+    /// 从不上色
     Never,
 }
 
 impl ColorMode {
-    pub fn from_env() -> Self {
-        let color = env::var("NETUTILS_COLOR").unwrap_or_default();
-        if env::var_os("NO_COLOR").is_some() || color.eq_ignore_ascii_case("never") {
-            Self::Never
-        } else if color.eq_ignore_ascii_case("always") {
-            Self::Always
-        } else {
-            Self::Auto
+    /// 解析 `auto`/`always`/`never`（大小写不敏感），无法识别时返回 `None`。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "always" | "1" | "true" => Some(Self::Always),
+            "never" | "0" | "false" => Some(Self::Never),
+            _ => None,
         }
     }
 
-    pub fn enabled(self) -> bool {
-        !matches!(self, Self::Never)
+    /// 读取核心下发的 `NETUTILS_COLOR`；未设置或无法识别时返回 `None`。
+    pub fn from_core_env() -> Option<Self> {
+        Self::parse(&env::var("NETUTILS_COLOR").ok()?)
     }
+}
+
+/// 供插件直接用作 clap `value_parser` 的解析函数，避免每个插件各写一份。
+///
+/// ```ignore
+/// #[arg(long, value_name = "WHEN", value_parser = netutils_plugin_sdk::parse_color_arg)]
+/// color: Option<netutils_plugin_sdk::ColorMode>,
+/// ```
+pub fn parse_color_arg(value: &str) -> std::result::Result<ColorMode, String> {
+    ColorMode::parse(value)
+        .ok_or_else(|| format!("invalid color '{value}', expected auto, always, or never"))
+}
+
+impl fmt::Display for ColorMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ColorMode::Auto => "auto",
+            ColorMode::Always => "always",
+            ColorMode::Never => "never",
+        })
+    }
+}
+
+/// 判定是否应该输出 ANSI 颜色。
+///
+/// 优先级与 `netutils` 核心的 `--color` 实现一一对应：
+///
+/// 1. 插件自身的 `--color`（`requested`）
+/// 2. 核心下发的 `NETUTILS_COLOR`
+/// 3. JSON 输出模式强制关闭（ANSI 会破坏解析）
+/// 4. `NO_COLOR`（<https://no-color.org>，设为非空即生效）
+/// 5. `CLICOLOR_FORCE` 非 `0`
+/// 6. `CLICOLOR=0`
+/// 7. auto：stdout 是终端时启用
+///
+/// 把核心下发值放在 `NO_COLOR` 之前是有意为之：核心在解析时已经考虑过
+/// `NO_COLOR`，此处再判一次会让 `netutils --color always <plugin>` 失效。
+pub fn color_enabled(requested: Option<ColorMode>, output: OutputMode) -> bool {
+    resolve_color(
+        requested,
+        output,
+        std::io::stdout().is_terminal(),
+        &|name| env::var(name).ok(),
+    )
+}
+
+fn resolve_color(
+    requested: Option<ColorMode>,
+    output: OutputMode,
+    stdout_is_terminal: bool,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    match requested {
+        Some(ColorMode::Always) => return true,
+        Some(ColorMode::Never) => return false,
+        Some(ColorMode::Auto) | None => {}
+    }
+
+    match lookup("NETUTILS_COLOR")
+        .as_deref()
+        .and_then(ColorMode::parse)
+    {
+        Some(ColorMode::Always) => return true,
+        Some(ColorMode::Never) => return false,
+        Some(ColorMode::Auto) | None => {}
+    }
+
+    if output.is_json() {
+        return false;
+    }
+
+    if lookup("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
+
+    if lookup("CLICOLOR_FORCE").is_some_and(|value| !value.is_empty() && value != "0") {
+        return true;
+    }
+
+    if lookup("CLICOLOR").is_some_and(|value| value == "0") {
+        return false;
+    }
+
+    stdout_is_terminal
+}
+
+/// 调用本插件的核心版本（`NETUTILS_CORE_VERSION`）；独立运行时为 `None`。
+pub fn core_version() -> Option<String> {
+    non_empty_env("NETUTILS_CORE_VERSION")
+}
+
+/// 核心分发时使用的插件命令名（`NETUTILS_PLUGIN_NAME`）；独立运行时为 `None`。
+pub fn plugin_name() -> Option<String> {
+    non_empty_env("NETUTILS_PLUGIN_NAME")
+}
+
+/// 是否由 `netutils` 核心分发执行，而非用户直接运行二进制。
+pub fn invoked_by_core() -> bool {
+    core_version().is_some()
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 #[derive(Debug)]
@@ -174,7 +295,7 @@ pub fn exit_on_failure(failed: bool) {
     }
 }
 
-pub fn status_text(ok: bool, color: ColorMode) -> String {
+pub fn status_text(ok: bool, color: bool) -> String {
     if ok {
         paint("ok", "32", color)
     } else {
@@ -182,16 +303,17 @@ pub fn status_text(ok: bool, color: ColorMode) -> String {
     }
 }
 
-pub fn warn_text(value: &str, color: ColorMode) -> String {
+pub fn warn_text(value: &str, color: bool) -> String {
     paint(value, "33", color)
 }
 
-pub fn error_text(value: &str, color: ColorMode) -> String {
+pub fn error_text(value: &str, color: bool) -> String {
     paint(value, "31", color)
 }
 
-pub fn paint(value: &str, ansi_code: &str, color: ColorMode) -> String {
-    if color.enabled() {
+/// `color` 由 [`color_enabled`] 给出，避免各插件各自判断颜色开关。
+pub fn paint(value: &str, ansi_code: &str, color: bool) -> String {
+    if color {
         format!("\x1b[{ansi_code}m{value}\x1b[0m")
     } else {
         value.to_string()
@@ -279,19 +401,134 @@ mod tests {
 
     #[test]
     fn color_mode_can_disable_paint() {
-        assert_eq!(paint("ok", "32", ColorMode::Never), "ok");
-        assert_eq!(paint("ok", "32", ColorMode::Always), "\x1b[32mok\x1b[0m");
+        assert_eq!(paint("ok", "32", false), "ok");
+        assert_eq!(paint("ok", "32", true), "\x1b[32mok\x1b[0m");
     }
 
     #[test]
-    fn color_mode_reads_env_protocol() {
+    fn color_mode_parses_documented_values() {
+        assert_eq!(ColorMode::parse("auto"), Some(ColorMode::Auto));
+        assert_eq!(ColorMode::parse("Always"), Some(ColorMode::Always));
+        assert_eq!(ColorMode::parse(" NEVER "), Some(ColorMode::Never));
+        assert_eq!(ColorMode::parse("rainbow"), None);
+    }
+
+    #[test]
+    fn color_arg_parser_reports_accepted_values() {
+        assert_eq!(parse_color_arg("never"), Ok(ColorMode::Never));
+        let err = parse_color_arg("rainbow").unwrap_err();
+        assert!(err.contains("auto, always, or never"), "{err}");
+    }
+
+    /// 构造一个只读的假环境，避免测试之间互相污染全局 env。
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        move |name: &str| {
+            owned
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    #[test]
+    fn plugin_flag_beats_core_env() {
+        let env = env_of(&[("NETUTILS_COLOR", "never")]);
+
+        assert!(resolve_color(
+            Some(ColorMode::Always),
+            OutputMode::Human,
+            false,
+            &env
+        ));
+    }
+
+    #[test]
+    fn core_env_beats_no_color() {
+        // 核心解析 --color 时已经考虑过 NO_COLOR，插件不能再否决一次。
+        let env = env_of(&[("NETUTILS_COLOR", "always"), ("NO_COLOR", "1")]);
+
+        assert!(resolve_color(None, OutputMode::Human, false, &env));
+    }
+
+    #[test]
+    fn core_env_never_disables_color() {
+        let env = env_of(&[("NETUTILS_COLOR", "never")]);
+
+        assert!(!resolve_color(None, OutputMode::Human, true, &env));
+    }
+
+    #[test]
+    fn json_mode_disables_color() {
+        let env = env_of(&[]);
+
+        assert!(!resolve_color(None, OutputMode::Json, true, &env));
+    }
+
+    #[test]
+    fn no_color_disables_color() {
+        let env = env_of(&[("NO_COLOR", "1")]);
+
+        assert!(!resolve_color(None, OutputMode::Human, true, &env));
+    }
+
+    #[test]
+    fn empty_no_color_is_ignored() {
+        let env = env_of(&[("NO_COLOR", "")]);
+
+        assert!(resolve_color(None, OutputMode::Human, true, &env));
+    }
+
+    #[test]
+    fn clicolor_force_enables_without_terminal() {
+        let env = env_of(&[("CLICOLOR_FORCE", "1")]);
+
+        assert!(resolve_color(None, OutputMode::Human, false, &env));
+    }
+
+    #[test]
+    fn clicolor_zero_disables_color() {
+        let env = env_of(&[("CLICOLOR", "0")]);
+
+        assert!(!resolve_color(None, OutputMode::Human, true, &env));
+    }
+
+    #[test]
+    fn auto_follows_terminal_detection() {
+        let env = env_of(&[]);
+
+        assert!(resolve_color(None, OutputMode::Human, true, &env));
+        // 重定向到文件时不再写入 ANSI 转义。
+        assert!(!resolve_color(None, OutputMode::Human, false, &env));
+    }
+
+    #[test]
+    fn core_identity_is_absent_when_run_standalone() {
         let _guard = ENV_LOCK.lock().unwrap();
-        env::remove_var("NO_COLOR");
-        env::set_var("NETUTILS_COLOR", "always");
-        assert_eq!(ColorMode::from_env(), ColorMode::Always);
-        env::set_var("NETUTILS_COLOR", "never");
-        assert_eq!(ColorMode::from_env(), ColorMode::Never);
-        env::remove_var("NETUTILS_COLOR");
+        let old_version = env::var_os("NETUTILS_CORE_VERSION");
+        let old_name = env::var_os("NETUTILS_PLUGIN_NAME");
+
+        env::remove_var("NETUTILS_CORE_VERSION");
+        env::remove_var("NETUTILS_PLUGIN_NAME");
+        assert_eq!(core_version(), None);
+        assert_eq!(plugin_name(), None);
+        assert!(!invoked_by_core());
+
+        env::set_var("NETUTILS_CORE_VERSION", "0.4.0");
+        env::set_var("NETUTILS_PLUGIN_NAME", "sse");
+        assert_eq!(core_version().as_deref(), Some("0.4.0"));
+        assert_eq!(plugin_name().as_deref(), Some("sse"));
+        assert!(invoked_by_core());
+
+        // 空值等同于未设置，避免把空字符串当成有效身份。
+        env::set_var("NETUTILS_CORE_VERSION", "");
+        assert_eq!(core_version(), None);
+
+        restore_env("NETUTILS_CORE_VERSION", old_version);
+        restore_env("NETUTILS_PLUGIN_NAME", old_name);
     }
 
     #[test]

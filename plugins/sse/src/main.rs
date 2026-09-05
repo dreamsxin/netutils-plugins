@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use colored::*;
 use netutils_plugin_sdk::{
-    exit_on_failure, print_json, print_table, proxy_for_url, redact_url_credentials, OutputMode,
+    color_enabled, exit_on_failure, parse_color_arg, print_json, print_table, proxy_for_url,
+    redact_url_credentials, ColorMode, OutputMode,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT};
 use serde::Serialize;
@@ -20,6 +21,10 @@ struct Cli {
     /// JSON output
     #[arg(long)]
     json: bool,
+
+    /// Color output (auto/always/never); NO_COLOR is honored
+    #[arg(long, value_name = "WHEN", value_parser = parse_color_arg)]
+    color: Option<ColorMode>,
 
     /// SSE URL, defaults to https:// when scheme is omitted
     url: String,
@@ -53,6 +58,9 @@ struct Cli {
 async fn main() {
     let cli = Cli::parse();
     let mode = OutputMode::from_json_flag(cli.json);
+    // 交给 SDK 统一判定，再驱动 `colored`，使 --color/NETUTILS_COLOR/NO_COLOR
+    // 以及「输出被重定向」这几种情况与核心行为一致。
+    colored::control::set_override(color_enabled(cli.color, mode));
     run(
         &cli.url,
         cli.headers,

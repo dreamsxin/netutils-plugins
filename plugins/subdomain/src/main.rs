@@ -3,8 +3,14 @@
 use std::{collections::BTreeSet, time::Duration};
 
 use clap::{Parser, ValueEnum};
-use netutils_plugin_sdk::{print_json, print_table, OutputMode};
+use netutils_plugin_sdk::{
+    exit_on_failure, print_json, print_table, proxy_for_url, redact_url_credentials, OutputMode,
+};
 use serde::{Deserialize, Serialize};
+
+/// 代理选择按目标 scheme 区分 HTTP/HTTPS，这里保留各数据源的入口地址用于判定。
+const CRTSH_ENDPOINT: &str = "https://crt.sh/";
+const BUFFEROVER_ENDPOINT: &str = "https://dns.bufferover.run/";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -35,6 +41,77 @@ struct Cli {
     /// Keep wildcard names instead of stripping the leading "*."
     #[arg(long)]
     include_wildcards: bool,
+
+    /// HTTP/SOCKS proxy for the passive source lookups
+    #[arg(long)]
+    proxy: Option<String>,
+
+    /// Force direct access and ignore explicit, core-forwarded, and environment proxies
+    #[arg(long, alias = "no-system-proxy")]
+    no_proxy: bool,
+}
+
+/// 代理选择结果，供两个数据源共用。
+#[derive(Debug, Clone)]
+struct ProxyChoice {
+    proxy: Option<String>,
+    no_proxy: bool,
+}
+
+impl ProxyChoice {
+    fn resolve(&self, target: &str) -> Option<String> {
+        proxy_for_url(target, self.proxy.clone(), self.no_proxy)
+    }
+
+    fn info(&self, target: &str) -> ProxyInfo {
+        let selected = self.resolve(target);
+        ProxyInfo {
+            mode: if self.no_proxy {
+                "direct-forced".to_string()
+            } else if selected.is_some() {
+                "proxy".to_string()
+            } else {
+                "direct".to_string()
+            },
+            value: selected.as_deref().map(redact_url_credentials),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProxyInfo {
+    pub mode: String,
+    pub value: Option<String>,
+}
+
+/// 统一构建 HTTP 客户端。
+///
+/// 未选定代理时**显式**调用 `.no_proxy()`：reqwest 默认会读取 `HTTP_PROXY`
+/// 等环境变量，此前这里静默继承了环境代理，导致 `--no-proxy` 形同虚设，
+/// 也与其他插件的代理契约不一致。
+fn build_client(
+    target: &str,
+    timeout: Duration,
+    choice: &ProxyChoice,
+) -> std::result::Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("netutils subdomain");
+    match choice.resolve(target) {
+        Some(proxy_url) => {
+            let proxy = reqwest::Proxy::all(&proxy_url).map_err(|err| {
+                format!(
+                    "invalid proxy {}: {err}",
+                    redact_url_credentials(&proxy_url)
+                )
+            })?;
+            builder = builder.proxy(proxy);
+        }
+        None => builder = builder.no_proxy(),
+    }
+    builder
+        .build()
+        .map_err(|err| format!("failed to build HTTP client: {err}"))
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -58,6 +135,7 @@ impl Source {
 pub struct SubdomainReport {
     pub domain: String,
     pub source: String,
+    pub proxy: ProxyInfo,
     pub query_url: Option<String>,
     pub discovered: usize,
     pub returned: usize,
@@ -100,40 +178,53 @@ async fn main() {
     let report = run(cli).await;
     let failed = report.error.is_some();
     output(&report, mode);
-    if failed {
-        std::process::exit(1);
-    }
+    exit_on_failure(failed);
 }
 
 async fn run(cli: Cli) -> SubdomainReport {
+    let choice = ProxyChoice {
+        proxy: cli.proxy.clone(),
+        no_proxy: cli.no_proxy,
+    };
     let domain = match normalize_domain(&cli.domain) {
         Ok(domain) => domain,
-        Err(err) => return error_report(&cli.domain, cli.source, cli.include_wildcards, err),
+        Err(err) => {
+            return error_report(
+                &cli.domain,
+                cli.source,
+                choice.info(CRTSH_ENDPOINT),
+                cli.include_wildcards,
+                err,
+            )
+        }
     };
     let timeout = Duration::from_secs(cli.timeout);
 
     match cli.source {
         Source::Crtsh => {
-            let result = discover_crtsh(&domain, timeout, cli.include_wildcards).await;
+            let result = discover_crtsh(&domain, timeout, cli.include_wildcards, &choice).await;
             build_report(
                 &domain,
                 Source::Crtsh,
+                choice.info(CRTSH_ENDPOINT),
                 result,
                 cli.include_wildcards,
                 cli.max,
             )
         }
         Source::Bufferover => {
-            let result = discover_bufferover(&domain, timeout, cli.include_wildcards).await;
+            let result =
+                discover_bufferover(&domain, timeout, cli.include_wildcards, &choice).await;
             build_report(
                 &domain,
                 Source::Bufferover,
+                choice.info(BUFFEROVER_ENDPOINT),
                 result,
                 cli.include_wildcards,
                 cli.max,
             )
         }
-        Source::All => query_all(&domain, timeout, cli.max, cli.include_wildcards).await,
+        Source::All => query_all(&domain, timeout, cli.max, cli.include_wildcards, &choice).await,
     }
 }
 
@@ -142,10 +233,11 @@ async fn query_all(
     timeout: Duration,
     max: usize,
     include_wildcards: bool,
+    choice: &ProxyChoice,
 ) -> SubdomainReport {
     let (crtsh, bufferover) = tokio::join!(
-        discover_crtsh(domain, timeout, include_wildcards),
-        discover_bufferover(domain, timeout, include_wildcards)
+        discover_crtsh(domain, timeout, include_wildcards, choice),
+        discover_bufferover(domain, timeout, include_wildcards, choice)
     );
 
     let mut combined = BTreeSet::new();
@@ -181,6 +273,7 @@ async fn query_all(
     SubdomainReport {
         domain: domain.to_string(),
         source: Source::All.as_str().to_string(),
+        proxy: choice.info(CRTSH_ENDPOINT),
         query_url: (!query_urls.is_empty()).then(|| query_urls.join(" | ")),
         discovered,
         returned: subdomains.len(),
@@ -196,20 +289,12 @@ async fn discover_crtsh(
     domain: &str,
     timeout: Duration,
     include_wildcards: bool,
+    choice: &ProxyChoice,
 ) -> DiscoveryResult {
     let query_url = format!("https://crt.sh/?q=%25.{domain}&output=json");
-    let client = match reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent("netutils subdomain")
-        .build()
-    {
+    let client = match build_client(CRTSH_ENDPOINT, timeout, choice) {
         Ok(client) => client,
-        Err(err) => {
-            return DiscoveryResult::error(
-                Some(query_url),
-                format!("failed to build HTTP client: {err}"),
-            )
-        }
+        Err(err) => return DiscoveryResult::error(Some(query_url), err),
     };
 
     let records = match fetch_crtsh_records(&client, &query_url).await {
@@ -260,20 +345,12 @@ async fn discover_bufferover(
     domain: &str,
     timeout: Duration,
     include_wildcards: bool,
+    choice: &ProxyChoice,
 ) -> DiscoveryResult {
     let query_url = format!("https://dns.bufferover.run/dns?q=.{domain}");
-    let client = match reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent("netutils subdomain")
-        .build()
-    {
+    let client = match build_client(BUFFEROVER_ENDPOINT, timeout, choice) {
         Ok(client) => client,
-        Err(err) => {
-            return DiscoveryResult::error(
-                Some(query_url),
-                format!("failed to build HTTP client: {err}"),
-            )
-        }
+        Err(err) => return DiscoveryResult::error(Some(query_url), err),
     };
 
     let records = match fetch_bufferover_records(&client, &query_url).await {
@@ -444,6 +521,7 @@ fn normalize_candidate(raw_name: &str, domain: &str, include_wildcards: bool) ->
 fn build_report(
     domain: &str,
     source: Source,
+    proxy: ProxyInfo,
     result: DiscoveryResult,
     include_wildcards: bool,
     max: usize,
@@ -453,6 +531,7 @@ fn build_report(
     SubdomainReport {
         domain: domain.to_string(),
         source: source.as_str().to_string(),
+        proxy,
         query_url: result.query_url,
         discovered,
         returned: subdomains.len(),
@@ -467,12 +546,14 @@ fn build_report(
 fn error_report(
     input_domain: &str,
     source: Source,
+    proxy: ProxyInfo,
     include_wildcards: bool,
     error: String,
 ) -> SubdomainReport {
     SubdomainReport {
         domain: input_domain.to_string(),
         source: source.as_str().to_string(),
+        proxy,
         query_url: None,
         discovered: 0,
         returned: 0,
@@ -504,6 +585,16 @@ fn print_report(report: &SubdomainReport) {
     println!("🔎 Subdomain Discovery");
     println!("  Domain: {}", report.domain);
     println!("  Source: {}", report.source);
+    println!(
+        "  Proxy: {}{}",
+        report.proxy.mode,
+        report
+            .proxy
+            .value
+            .as_ref()
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default()
+    );
     if let Some(url) = &report.query_url {
         println!("  Query: {url}");
     }
@@ -536,6 +627,39 @@ fn print_report(report: &SubdomainReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 测试里只关心报告结构，代理信息统一用「直连」占位。
+    fn direct_proxy_info() -> ProxyInfo {
+        ProxyChoice {
+            proxy: None,
+            no_proxy: true,
+        }
+        .info(CRTSH_ENDPOINT)
+    }
+
+    #[test]
+    fn no_proxy_choice_reports_direct_forced() {
+        let info = ProxyChoice {
+            proxy: Some("http://127.0.0.1:1".to_string()),
+            no_proxy: true,
+        }
+        .info(CRTSH_ENDPOINT);
+
+        assert_eq!(info.mode, "direct-forced");
+        assert_eq!(info.value, None);
+    }
+
+    #[test]
+    fn explicit_proxy_choice_is_redacted() {
+        let info = ProxyChoice {
+            proxy: Some("http://user:secret@127.0.0.1:1".to_string()),
+            no_proxy: false,
+        }
+        .info(CRTSH_ENDPOINT);
+
+        assert_eq!(info.mode, "proxy");
+        assert_eq!(info.value.as_deref(), Some("http://***@127.0.0.1:1"));
+    }
 
     #[test]
     fn normalizes_domain_from_plain_host() {
@@ -593,7 +717,14 @@ mod tests {
             error: None,
             notes: default_notes(),
         };
-        let report = build_report("example.com", Source::Crtsh, result, false, 2);
+        let report = build_report(
+            "example.com",
+            Source::Crtsh,
+            direct_proxy_info(),
+            result,
+            false,
+            2,
+        );
         assert_eq!(report.discovered, 3);
         assert!(report.truncated);
         assert_eq!(report.subdomains, vec!["a.example.com", "b.example.com"]);
